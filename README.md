@@ -1,57 +1,80 @@
-# ⚡ SparkLogSentinel
+# ⚡ SparkLogSentinel — Enterprise Edition
 
-**Real-Time Log Analytics & Anomaly Detection with Apache Spark**
+**Real-Time Log Analytics & Anomaly Detection**
+*Built with Apache Kafka → Apache Spark Structured Streaming → PostgreSQL*
 
-SparkLogSentinel is a robust, real-time streaming analytics pipeline that monitors web server traffic and detects simulated DoS attacks (HTTP 500 error bursts) within milliseconds using Apache Spark Structured Streaming.
-
----
-
-## 🏗️ Architecture Overview
-
-This project consists of two core components running in tandem:
-
-1. **The Log Anomaly Injector** (`anomaly_injector.py`): 
-   A Python daemon that acts as a web server, streaming simulated access logs over a raw TCP socket. It normally streams healthy `HTTP 200` traffic but is programmed to abruptly inject a severe simulated server crash (a burst of 80x `HTTP 500` errors) to test the downstream analytics engine.
-
-2. **The Spark Analytics Engine** (`log_analytics.py`):
-   A PySpark Structured Streaming application. It ingests the unbounded log stream, parses the Apache Common Log Format using distributed regular expressions, and applies a **5-minute sliding window** (sliding every 1 minute) to aggregate traffic status codes. If it detects more than 50 server errors in any single window, it throws a real-time anomaly alert.
+SparkLogSentinel is a production-grade streaming data pipeline that monitors live web server traffic, detects HTTP 500 error bursts using a sliding-window algorithm, and permanently stores anomaly alerts inside a relational database.
 
 ---
 
-## 🚀 Quick Start Guide (Windows)
+## 🏗️ Architecture
 
-This project has been pre-configured to run easily on Windows machines leveraging a helper batch script that bypasses common PySpark Windows environment bugs.
+This project replicates the enterprise **Kafka → Spark Cluster → Reliable Storage** pattern:
 
-### Prerequisites
-* **Python 3.x**
-* **Apache Spark** (PySpark module installed via `pip install pyspark`)
-* **Java 17+** (Ensure `JAVA_HOME` is set)
-* **Hadoop WinUtils** (Automatically handled by the start script)
-
-### Running the Demo
-
-1. Clone this repository to your local machine.
-2. Navigate to the project directory.
-3. Double-click the **`run_demo.bat`** file.
-
-*Alternatively, from a terminal:*
-```powershell
-.\run_demo.bat
+```
+[anomaly_injector.py]              [Docker Enterprise Cluster]               [Output Sink]
+   Kafka Producer          →    Kafka Broker → Spark Cluster (1 Master,    →  PostgreSQL DB
+(Publishes web logs                              2 Workers) → JDBC Write         (anomalies table)
+ to 'server_logs' topic)
 ```
 
-### What Happens Next?
-The batch script will safely clean up any old Spark checkpoint data to prevent offset mismatch crashes and will simultaneously launch **two PowerShell windows**:
+| Component | Technology | Role |
+|---|---|---|
+| Data Source | `anomaly_injector.py` + Kafka | Streams simulated web logs into a message queue |
+| Message Queue | Apache Kafka (Docker) | Buffers and reliably delivers logs to Spark |
+| Stream Processor | `log_analytics.py` + Spark Cluster | Parses, aggregates, detects anomalies |
+| Reliable Storage | PostgreSQL (Docker) | Permanently stores all detected anomaly alerts |
+| Orchestration | Docker Compose | Manages all infrastructure containers |
 
-*   **Window 1 (The Server):** Starts streaming logs and visually indicates when the HTTP 500 attack phase begins.
-*   **Window 2 (The Sentinel):** Boots the Apache Spark engine. Watch this window as it processes the micro-batches. When the attack phase hits, you will see a table output a critical `⚠️ ANOMALY: 50+ server errors detected!` alert.
+---
+
+## 🚀 Quick Start
+
+### Prerequisites
+- Docker Desktop (running)
+- Python 3.x with `pyspark` and `kafka-python-ng` installed
+
+### 1. Start the Enterprise Cluster
+```powershell
+cd "case study\enterprise"
+docker compose up -d
+```
+Wait ~30 seconds for Kafka, Spark, and Postgres to fully boot.
+
+### 2. Run the Kafka Log Injector (Terminal 1)
+```powershell
+python anomaly_injector.py
+```
+This publishes 100 normal logs, followed by an 80-error HTTP 500 crash burst, directly into Kafka.
+
+### 3. Run the Spark Analytics Engine (Terminal 2)
+```powershell
+$env:HADOOP_HOME="C:\hadoop"; python log_analytics.py
+```
+Spark reads from Kafka, detects the anomaly using a 5-minute sliding window, and writes the alert into PostgreSQL.
+
+### 4. Query the Database
+```powershell
+docker exec -it enterprise-postgres-1 psql -U spark_admin -d analytics_db -c "SELECT * FROM anomalies;"
+```
+
+### Stop the Cluster
+```powershell
+docker compose down
+```
 
 ---
 
-## 🛠️ Built With
-
-*   **Apache Spark (Structured Streaming)** - State-of-the-art micro-batch streaming engine.
-*   **Py4J / PySpark** - The Python API for Spark.
-*   **Python TCP Sockets** - For high-throughput log simulation.
+## 📁 Project Structure
+```
+case study/
+├── anomaly_injector.py       # Kafka Producer (Data Source)
+├── log_analytics.py          # PySpark Streaming Engine
+├── postgresql-42.6.0.jar     # Postgres JDBC Driver for Spark
+├── spark-sql-kafka-*.jar     # Kafka Integration for Spark
+└── enterprise/
+    └── docker-compose.yml    # Full enterprise cluster definition
+```
 
 ---
-*Created as a Case Study for Real-Time Distributed Systems Analysis.*
+*Case Study — Real-Time Distributed Systems with Apache Spark*

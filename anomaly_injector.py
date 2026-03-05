@@ -1,24 +1,22 @@
 """
-Phase 3: Anomaly Injector — Simulates a Server Crash (Spike of 500 Errors)
+Phase 2: Anomaly Injector — Enterprise Kafka Producer
 ---------------------------------------------------------------------------
-This script is an ENHANCED version of stream_simulator.py.
-It streams normal logs first, then injects a sudden burst of HTTP 500 errors
-to trigger the anomaly detection in log_analytics.py.
+This script acts as the 'Data Source' in the enterprise architecture diagram.
+Instead of an archaic raw TCP socket, it publishes simulated web traffic 
+directly into an Apache Kafka topic ('server_logs').
 
-Use this INSTEAD of stream_simulator.py for a more dramatic demo.
-
-Run BEFORE starting log_analytics.py:
-    Terminal 1: python anomaly_injector.py
-    Terminal 2: python log_analytics.py
+Dependencies:
+    pip install kafka-python-ng
 """
 
-import socket
 import time
 import random
 from datetime import datetime
+import json
+from kafka import KafkaProducer
 
-HOST = 'localhost'
-PORT = 9999
+KAFKA_BROKER = 'localhost:9092'
+KAFKA_TOPIC = 'server_logs'
 
 # ── Configurable parameters ──────────────────────────────────────────────────
 NORMAL_LOG_COUNT   = 100   # Normal traffic logs to send first
@@ -44,57 +42,57 @@ def make_log_line(status_code, ip=None):
     method = "GET"
     path   = random.choice(SAMPLE_PATHS)
     size   = random.randint(200, 9999)
-    return f'{ip} - - [{ts}] "{method} {path} HTTP/1.1" {status_code} {size}\n'
+    return f'{ip} - - [{ts}] "{method} {path} HTTP/1.1" {status_code} {size}'
 
-def stream_logs(conn):
-    """Stream normal traffic, then inject a burst of 500 errors."""
+def stream_logs(producer):
+    """Publish logs directly to the Apache Kafka Broker."""
 
-    print(f"\n[Phase A] Sending {NORMAL_LOG_COUNT} normal log lines (200 OK)...")
+    print(f"\n[Phase A] Publishing {NORMAL_LOG_COUNT} normal log lines to Kafka topic '{KAFKA_TOPIC}'...")
     for i in range(NORMAL_LOG_COUNT):
         line = make_log_line(200)
-        conn.sendall(line.encode('utf-8'))
+        producer.send(KAFKA_TOPIC, line.encode('utf-8'))
         time.sleep(NORMAL_DELAY)
     print("[Phase A] Done. Normal traffic complete.\n")
 
     print(f"[Phase B] ⚠️  INJECTING {BURST_ERROR_COUNT} HTTP 500 errors (SIMULATED CRASH)...")
-    offending_ip = "66.249.73.135"  # Simulate one bad actor / crashing endpoint
+    offending_ip = "66.249.73.135"
     for i in range(BURST_ERROR_COUNT):
         line = make_log_line(500, ip=offending_ip)
-        conn.sendall(line.encode('utf-8'))
+        producer.send(KAFKA_TOPIC, line.encode('utf-8'))
         time.sleep(BURST_DELAY)
     print("[Phase B] Done. Burst of errors sent.\n")
 
     print("[Phase C] Resuming normal traffic (recovery)...")
     for i in range(50):
         line = make_log_line(200)
-        conn.sendall(line.encode('utf-8'))
+        producer.send(KAFKA_TOPIC, line.encode('utf-8'))
         time.sleep(NORMAL_DELAY)
+    
+    # Ensure all asynchronous messages are actually sent before closing
+    producer.flush()
     print("[Phase C] Done. Stream complete.")
 
 
 def main():
-    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    print("=" * 60)
+    print("  Enterprise Anomaly Injector — Apache Kafka Producer")
+    print(f"  Target Broker: {KAFKA_BROKER}")
+    print("=" * 60)
 
     try:
-        server_socket.bind((HOST, PORT))
-        server_socket.listen(1)
-        print("=" * 60)
-        print("  Anomaly Injector — Waiting for Spark to connect...")
-        print(f"  Listening on {HOST}:{PORT}")
-        print("=" * 60)
-
-        conn, addr = server_socket.accept()
-        print(f"\n✅ Spark connected from {addr}. Starting stream...\n")
-        stream_logs(conn)
+        # Connect to the Kafka container hosted by Docker
+        producer = KafkaProducer(bootstrap_servers=KAFKA_BROKER)
+        print(f"\n✅ Successfully connected to Kafka Broker at {KAFKA_BROKER}!\n")
+        
+        stream_logs(producer)
 
     except KeyboardInterrupt:
         print("\nStopped by user.")
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"\n❌ Failed to connect to Kafka: {e}")
+        print("Ensure 'docker compose up -d' is running and Kafka is healthy.")
     finally:
-        server_socket.close()
-        print("\nServer socket closed.")
+        print("\nProducer shutdown.")
 
 
 if __name__ == '__main__':
